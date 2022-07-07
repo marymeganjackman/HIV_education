@@ -12,17 +12,17 @@ SQL queries:
   assigning aliases
   
 Excel:
-  Cleaning data,
-  Pivot tables,
-  Filtering data,
-  Drafting a cleaning change log
+  cleaning data,
+  pivot tables,
+  filtering data,
+  drafting a cleaning change log
   
 R:
   RMarkdown,
-  Importing data,
+  importing data,
   ggplot2,
   gganimate,
-  Integers vs doubles,
-  Changing data type,
-  Facet Wrap,
-  Paginate,
+  integers vs doubles,
+  changing data type,
+  facet wrap,
+  paginate
