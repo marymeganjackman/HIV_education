@@ -1,0 +1,580 @@
+---
+title: "R Notebook"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+#Setting the environment
+
+Trying to create a notebook to keep my thoughts straight on how I'm going to try to analyze the world_bank_health_population dataset on BigQuery. The dataset has 3 million observations of health data around the world, and could lead to a lot of interesting insights.
+
+Barriers in the project have come from the sheer amount of data, and being unable to match the series_summary (table that contains descriptions of what is being measured) to the health_nutrition_population (table that contains values for what is being measured).
+
+##Inner Join
+My first hope is to craft code to create an innerjoin of the data so that I can stop spinning my wheels by using ctrl+F to see if I can match a description to a value.
+
+Notes to self: I need an innerjoin on
+table: health_nutrition_population 
+  column: indicator_code
+and
+table: series_summary 
+  column: series_code
+  
+--for the record this is NOT R code, but SQL code I am copying and pasting into BigQuery because I know nothing, but I love the format of RMarkdown to keep things organized. yikes mb mb so sorry I'll learn more but it's my first week so I'm still figuring out the basics
+```{r}
+
+SELECT
+  population.country_name,
+  population.indicator_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+FROM
+  `bigquery-public-data.world_bank_health_population.series_summary`AS summary
+INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+ON
+  summary.series_code = population.indicator_code
+```
+
+##Inner Join Reaction
+Okay okay okay!
+I did it!
+And it did NOT filter out any data, so I don't know what I was doing before, but every indicator_code matched up with a value. I guess I could double check by selecting the summary version?
+
+###Double check code chunk 1
+I ran the following code, which just switched out the population.indicator_code for the summary.series_code to double check that the row count would be the same either way I ran it. So each indicator_code DID have it's own value, and there weren't missing items like I thought in the table.
+
+```{r}
+#again this is SQL code that I copied and pasted into BigQuery. Same think as chunk 1, but switched the summary.series_code
+
+SELECT
+  population.country_name,
+  summary.series_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+FROM
+  `bigquery-public-data.world_bank_health_population.series_summary` AS summary
+INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+ON
+  summary.series_code = population.indicator_code
+```
+
+##(cont.) Inner Join Reaction
+So that was the correct running. And now I'm left with still 3 million rows of data AHH. How do I whittle that down into something I can work with?
+
+okay okay okay
+
+breathe
+
+##Save InnerJoin table as new table
+
+Saving it as a new table so I can run further work on what I just joined. To filter, add a WHERE clause to the bottom of the code specific to your filter.
+
+```{r}
+WITH
+summary_and_population AS (
+  SELECT
+  population.country_name,
+  population.indicator_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+  FROM
+  `bigquery-public-data.world_bank_health_population.series_summary`AS summary
+  INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+  ON
+  summary.series_code = population.indicator_code
+  )
+
+SELECT *
+FROM summary_and_population
+```
+
+##(cont.) Reaction to Inner Join
+Think of the original question you thought of: correlation of HIV education and HIV prevalence (edit: *incidence not prevalence. After further analysis I'm decided to map incidence. I will be more aware of word usage in the project, but also leaving my mistake to document my learning process). Also does gender (or other factors?) play a large role in how effective the education is?
+
+What are the tags for that?
+Option 1: filter by summary.topic = HIV/AIDS
+Option 2: filter by "comprehensive correct" in summary.indicator_name
+
+Other tidbit: using SH.HIV.INCD (as people newly infected with HIV) might be a more helpful indicator of effect of education because new education won't affect those who have already gotten HIV.
+
+Barriers: it seems like there are two different tags for "comprehensive correct knowledge of HIV/AIDs...", well, 2 separate tages each with a separate gender, so 4 total. they look like: SH.HIV.KNOW.MA.ZS and SH.HIV.1524.KW.MA.ZS weird
+
+##Filter data to return just education and incidence
+There is still a lot to be done after this (countries? years? do they have data for each point??), but this is the next step to whittle down the 3 mil rows.
+
+I want to return: 
+SH.HIV.INCD
+SH.HIV.KNOW.MA.ZS
+SH.HIV.KNOW.FE.ZS
+SH.HIV.1524.KW.MA.ZS
+SH.HIV.1524.KW.FE.ZS
+
+Oh it's AGE! HIV.KNOW.MA is for 15+, HIV.1524.KW.MA is for 15-24
+
+Interesting they have it so broken up. That might be useful as I look for trends.
+
+The following code will filter my data.
+
+```{r}
+WITH
+summary_and_population AS (
+  SELECT
+  population.country_name,
+  population.indicator_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+  FROM
+  `bigquery-public-data.world_bank_health_population.series_summary`AS summary
+  INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+  ON
+  summary.series_code = population.indicator_code
+  )
+
+SELECT 
+  *
+FROM 
+  summary_and_population
+WHERE 
+  indicator_code = "SH.HIV.1524.KW.FE.ZS" OR
+  indicator_code = "SH.HIV.1524.KW.MA.ZS" OR
+  indicator_code = "SH.HIV.INCD" OR
+  indicator_code = "SH.HIV.KNOW.FE.ZS" OR
+  indicator_code = "SH.HIV.KNOW.MA.ZS" OR
+  indicator_code = "SH.HIV.INCD.YG"
+
+```
+
+##Reaction to filtering
+Shit.
+
+Why are all the values for incidence equal to 1? Like ALL of them?
+
+And then I went and looked for an indicator_code in population and I saw one that was different that was "SH.HIV.INCD.YG.P3" and it talked about incidence per 1000 in Chad or something and I added it to my query and it took the rows from 8982 to 13587. So I must not have caught all the ideas of incidence?? This is bizarre. But it's time to make dinner and pick up my kids so I'll have to explore this more tomorrow. BUT EVERYTHING IS SAVED! Yay for Markdown!
+
+##New day, troubleshooting filtering
+Okay. Trying to figure out what is going on with values for SH.HIV.INCD. I ran the following code:
+
+```{r}
+WITH
+summary_and_population AS (
+  SELECT
+  population.country_name,
+  population.indicator_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+  FROM
+  `bigquery-public-data.world_bank_health_population.series_summary`AS summary
+  INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+  ON
+  summary.series_code = population.indicator_code
+  )
+
+SELECT
+  *
+FROM 
+  summary_and_population
+WHERE 
+  indicator_code = "SH.HIV.INCD" AND
+  value != 1
+```
+
+...and the results were no data. If I run the code without the last line (value != 1), I get 4038 results. So. Every single observation of SH.HIV.INCD has a value of 1. That's dumb.
+
+My next step is to investigate the other codes I found. And why didn't I find them in the original summary table?
+
+K, here are some other promising codes:
+SH.HIV.INCD.ZS (incidence of HIV ages 15-49)
+SH.HIV.INCD.YG.P3 (incidence of HIV ages 15-24)
+SH.HIV.INCD.TL.P3 (incidence of HIV ages 0+)
+
+I must have just missed them in my original scan. I found them using the WHERE statement of topic="HIV/AIDS" in the summary table.
+
+Alright.
+
+##Filtering Attempt number 2
+
+Updated the codes to ones with actual values, and got good results with the following code:
+
+```{r}
+WITH
+summary_and_population AS (
+  SELECT
+  population.country_name,
+  population.indicator_code,
+  population.value,
+  population.year,
+  summary.indicator_name,
+  summary.short_definition
+  FROM
+  `bigquery-public-data.world_bank_health_population.series_summary`AS summary
+  INNER JOIN
+  `bigquery-public-data.world_bank_health_population.health_nutrition_population` AS population
+  ON
+  summary.series_code = population.indicator_code
+  )
+
+SELECT 
+  *
+FROM 
+  summary_and_population
+WHERE 
+  indicator_code = "SH.HIV.1524.KW.FE.ZS" OR
+  indicator_code = "SH.HIV.1524.KW.MA.ZS" OR
+  indicator_code = "SH.HIV.INCD.ZS" OR
+  indicator_code = "SH.HIV.KNOW.FE.ZS" OR
+  indicator_code = "SH.HIV.KNOW.MA.ZS" OR
+  indicator_code = "SH.HIV.INCD.YG.P3"
+```
+
+It returned 10179 results, all with real values. Lol. That was a nightmare.
+
+Okay okay okay. Now what?
+
+Do I want to actually use R at this point? Or Tableau? To start piecing together correlations? Do I need to further filter by country?
+
+I might try a facet wrap by country to see if I can see anything interesting? Let's give it a shot, I might be skipping steps and I might need to backtrack but that's okay.
+
+##Attempted facet wrap
+
+###Importing file
+Okay. I downloaded a .csv from BigQuery with 10179 observations. I will upload it here in R and try to look at some different facets.
+
+```{r}
+HIVdata <- read_csv("WorldBankHealthHIV/HIVdata.csv")
+```
+###Importing file response
+Yay! That was a lot of work, stress about the working directory. I learned about ways to getwd(), setwd(), and even use the settings gear in the files panel to set my directory. But my mistake was actually forgetting the quotations in the argument clause. Whoops.
+
+##Attempt at facet wrap
+How do I want to do a facet wrap? What parameters do I want to look at?
+
+I want to separate by country. I want year on the x axis. I want percentage on the y axis. And I want trend lines for female education, male education, and prevalence. I will probably start with total group, and if I can't find anything, I'll look at young group.
+
+```{r}
+ggplot(data=HIVdata) +
+  geom_point(mapping = aes(x=year, y=value, color=indicator_code)) +
+  facet_wrap(~country_name)
+```
+##Response to attempted facet wrap
+SO MANY CHARTS lol
+
+I should probably filter countries of interest, but how do I know WHAT is a country of interest? I would just love to pan through all the different facets at different sizes.
+
+I think I can change my figure height? Attempt 2?
+
+```{r}
+p.list = lapply(sort(unique(HIVdata)), function(i) {
+  ggplot(data=HIVdata) +
+  geom_point(mapping = aes(x=year, y=value, color=indicator_code)) +
+  facet_wrap(~country_name)
+})
+```
+```{r}
+install.packages("ggforce")
+library(ggforce)
+```
+
+```{r}
+ ggplot(data=HIVdata) +
+  geom_point(mapping = aes(x=year, y=value, color=indicator_code)) +
+  facet_wrap_paginate(~ country_name, ncol = 3, nrow = 3, page=21)
+```
+##Response to facet wrap
+I did it! Change the page numbers in the last line of code to see different countries. Countries that might be of further interest:
+South Africa
+Tanzania
+Togo
+Uganda
+Zambia
+Zimbabwe
+Botswana
+Cameroon
+Congo
+Cote d'Ivorie
+Eswatini
+Ethiopia
+Gambia Ghana--why are the education numbers going down?
+Guinea-Bissau
+Kenya
+Lesotho
+Malawi
+Mozambique
+Namibia
+Rwanda
+
+It's tricky looking at the data. It seems like there are multiple countries where data may have been keyed in wrong (education levels drop from 20% to 0% a and then back up to 25%).
+
+Trends that I am observing:
+*Male education seems to be higher than female education
+*There is a correlation between education and a drop in HIV, but :/ because HIV has been dropping, so as long as you find something that has been increasing in the last 20 years there will be a correlation.
+*Not every country had a huge spike in HIV incidence. Would it be interesting to map incidence across time in a geographic map?
+
+##Pivot to incidence across time
+It looks like I can install gganimate to create a map across time? Let's learn something new today I guess.
+
+```{r}
+devtools::install_github('thomasp85/gganimate')
+```
+```{r}
+install.packages("gganimate")
+```
+```{r}
+library(gganimate)
+```
+
+```{r}
+install.packages("av")
+install.packages("gifski")
+library(av)
+library(gifski)
+```
+
+#Reinvent the graph--gganimate geompoint with time of incidence x knowledge
+Okay okay okay. 
+New day! Hello Monday. I've had the weekend to think, and I've come up with a new direction and I hope it's beneficial. I'm looking at creating an animated point plot of incidence on the y axis and knowledge on the x axis and have it move by year.
+
+How do I move forward from here? There are lots of things to consider:
+*Selecting which countries to include
+*Eliminate the weird outliers that look like nulls (consistent trendline and then you see a single year where y=0)
+*Average together the knowledge so that you have a single plot point of education
+*Include population to create circle of the size?
+*Figure out how to animate it
+
+Let's get to it.
+
+### Step 1: gganimate education x poverty
+What criteria do I want to use for including a country in the visualization?
+
+I have a list of countries above that I wrote down because they looked interesting. What makes a country interesting for this data?
+
+*High threshold of HIV incidence (determinne what the threshold should be and filter off of it)
+*Data exists for HIV incidence and some degree of education (education values seem spotty. Yikes. How do I determine what to include? What if some countries only have values for some years?)
+
+Actually, I think I want a method to quickly look up a specific country's chart.
+South Africa
+Tanzania
+Togo
+Uganda
+Zambia
+Zimbabwe
+Botswana
+Cameroon
+Congo
+Cote d'Ivorie
+Eswatini
+Ethiopia
+Gambia Ghana--why are the education numbers going down?
+Guinea-Bissau
+Kenya
+Lesotho
+Malawi
+Mozambique
+Namibia
+Rwanda
+
+```{r}
+ggplot(data=HIVdata %>%
+         dplyr::filter(country_name == "Zimbabwe")) +
+  geom_point(mapping = aes(x=year, y=value, color=indicator_code))
+```
+
+I did it!
+K. Now I can look at each country I care about. Lol. And kind of get an idea for criteria for inclusion.
+
+Botswana won't work because it only has one instance of education data.
+
+But will it really not work?
+
+I mean, could I just include it as a data point once? And you still get a data point of education vs incidence, you just don't see the identical country move through time. But I think that's okay because you have enough countries showing up in each frame.
+
+SO in that case, the filter would just need to plot if the year has an incidence rate and an average education score.
+
+Do I correlate ONLY youth to youth and all to all?
+
+I could color code it? yellow=Youth=youth and purple=total=total?
+
+Which, what would that filter look like?
+Must have youth education & youth incidence
+OR
+total education & total incidence
+
+((OKAY. Quick snafu. I wasn't seeing any male education results when I looked at the charts more closely, and realized that I hadn't inputted the indicator code correctly in my SQL command, so I need to go back and reset my data. :( But it is fixable so that's good.))
+
+```{r}
+HIVdata <- read_csv("WorldBankHealthHIV/HIVdata_v02.csv")
+```
+Maybe I can do some cleaning in Excel at this point?
+
+##gganimate with cleaned data for youth only
+
+Alright alright alright. :) I cleaned up the data pretty nice in Excel, with the following changes:
+-eliminated nulls of education
+-averaged the knowledge
+-filtered the countries to countries with >3% incidence
+-I would like to test the gganimate with the youth data. If it works, then I will clean the adult data with the same process and MAKE A GREAT GRAPH!
+
+###Load cleaned version of youth data
+
+```{r}
+HIVdata_v03 <- read_csv("WorldBankHealthHIV/HIVdata_v03.csv")
+```
+
+###gganimate!
+
+Okay. Let's build the code here.
+
+
+```{r}
+p <- ggplot(HIVdata_v03, aes(average_education, incidence_youth)) +
+  geom_point(alpha = 0.7, show.legend = TRUE) +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {frame_time}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_time(year)
+```
+
+```{r}
+p_anim <- animate(p, fps=4)
+p_anim
+```
+###reaction to gganimate
+It looks chaotic! Lol. Because so many different countries show up, I feel like it disrupts a sense of continuity in the graph. I can maybe change that my not having such a weird year thing! I don't know why it's doing decimals after the year. But maybe it still wouldn't save it and I would want to limit my groups to countries that have 4 or more data points, and then I could do colors based off of countries, sizes based off of populations, and shapes based off of youth or total.
+
+###troubleshooting year decimal
+
+Looking online, I found an idea to do the transition time as an integer. I would alter the code to be as follows:
+
+```{r}
+p <- ggplot(HIVdata_v03, aes(average_education, incidence_youth)) +
+  geom_point(alpha = 0.7, show.legend = TRUE) +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {as.integer(frame_time)}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_time(year)
+p_anim <- animate(p, fps=4)
+p_anim
+```
+
+This does get rid of the decimal, but I can't figure out why it has so many instances within one year. Here's another suggestion to change transition_time to transition_states
+
+```{r}
+p <- ggplot(HIVdata_v03, aes(average_education, incidence_youth)) +
+  geom_point(alpha = 0.7, show.legend = TRUE) +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {closest_state}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_states(year, transition_length=1, state_length = 1) +
+  ease_aes('linear')
+p_anim <- animate(p, fps=4)
+p_anim
+```
+
+Okay. That is still SO CLUNKY.
+
+K. Let's get to the root of the issue and do some learning here.
+
+From the interent: if the numeric value being used is type 'double', you get the decimal behavior. If it is type 'integer', it works correctly.
+
+So let's learn a little about the difference between the types of double and integer.
+
+Okay. So double is another name for float (named as double precision float), which is essentially the data format that allows decimals (I'm SURE there's more to it, but it's just my first time on the job. I'll learn more as I get more experienced!). Integer doesn't allow for decimals. But we need our years as integers, and they are coded as floats, or doubles.
+
+This is a way I found on stackoverflow for converting a column to a different data type. Let's give it a shot.
+
+```{r}
+HIVdata_v04 <- HIVdata_v03 %>% 
+  mutate(across(
+    .cols = matches('year'),
+    .fns = ~ as.integer(.x)))
+```
+
+It worked! Let's try with the original gganimate code now, but changed to v04
+
+```{r}
+p <- ggplot(HIVdata_v04, aes(average_education, incidence_youth)) +
+  geom_point(alpha = 0.7, show.legend = TRUE) +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {frame_time}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_time(year) 
+p_anim <- animate(p, fps=4)
+p_anim
+```
+Okay. Cool. That totally was the answer. I learned!
+
+But now. Let's see how it renders if I limit data to countries that have more than 4 data points, I code by color and size for population.
+
+I have to create a new data set in Excel.
+
+I can do this.
+
+```{r}
+HIVdata_v05 <- read_csv("WorldBankHealthHIV/HIVdata_v05.csv")
+HIVdata_v05 <- HIVdata_v05 %>% 
+  mutate(across(
+    .cols = matches('year'),
+    .fns = ~ as.integer(.x)))
+```
+##Attempting to leave data on the field to address the barrier of not having sequential data
+
+Okay. SO. I don't have four data points in sequential order. And this is wildly difficult.
+
+I will try to change this by leaving the data on the graph. This can supposedly be done by switching transition_time to transition_reveal
+
+```{r}
+install.packages("viridis")
+```
+
+```{r}
+library(viridis)
+```
+
+
+```{r}
+p <- ggplot(HIVdata_v05, aes(average_education, incidence_youth, colour = country)
+            ) +
+  geom_point(alpha = 0.7, show.legend = TRUE) +
+  scale_color_viridis_d() +
+  # Here comes the gganimate specific bits
+  labs(title = 'Year: {frame_time}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_reveal(year) 
+p
+```
+```{r}
+p <- ggplot(HIVdata_v05, aes(average_education, incidence_youth, colour = country)
+            ) +
+  geom_line() +
+  scale_color_viridis_d() +
+  geom_point
+  labs(title = 'Year: {frame_time}', x = 'HIV Education', y = 'HIV Incidence') +
+  transition_reveal(year) 
+p
+```
+
+Last attempt before lunch
+
+```{r}
+HIVdata_v05 %>%
+  ggplot(aes(x = average_education, y = incidence_youth, group = country, color = country)) +
+  geom_path() +
+  scale_color_viridis_d() +
+  transition_reveal(along = year)
+```
+
+```{r}
+anim_save(HIVyouth_v01.gif, animation = last_animation())
+```
+
